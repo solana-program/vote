@@ -1,0 +1,9 @@
+//! Vote Program.
+
+#[cfg(all(target_os = "solana", feature = "bpf-entrypoint"))]
+mod entrypoint;
+
+// [Core BPF]: TODO: Program-test will not overwrite existing built-ins.
+// See https://github.com/solana-labs/solana/pull/35233.
+// solana_program::declare_id!("Vote111111111111111111111111111111111111111");
+solana_program::declare_id!("4YV59ZoDVJPAaAPth6pqWM1SX1FaztT4jxC8m56WMpa5");

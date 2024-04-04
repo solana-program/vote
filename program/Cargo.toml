@@ -1,0 +1,22 @@
+[package]
+name = "solana-vote-program"
+version = "0.1.0"
+description = "Solana Vote Program"
+authors = ["Anza Technology Maintainers <maintainers@anza.xyz>"]
+repository = "https://github.com/solana-program/config"
+readme = "./README.md"
+license-file = "../LICENSE"
+edition = "2021"
+
+[package.metadata.solana]
+program-id = "Vote111111111111111111111111111111111111111"
+
+[features]
+bpf-entrypoint = []
+test-sbf = []
+
+[dependencies]
+solana-program = "1.18.2"
+
+[lib]
+crate-type = ["cdylib", "lib"]
