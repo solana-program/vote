@@ -22,6 +22,7 @@ serde = { version = "1.0.193", features = ["derive"] }
 solana-frozen-abi-macro = { git = "https://github.com/anza-xyz/agave", ref = "9706a6464665f7ebd6ead47f0d12f853ccacbab9" }
 solana-frozen-abi = { git = "https://github.com/anza-xyz/agave", ref = "9706a6464665f7ebd6ead47f0d12f853ccacbab9" }
 solana-program = { git = "https://github.com/anza-xyz/agave", ref = "9706a6464665f7ebd6ead47f0d12f853ccacbab9" }
+spl-program-error = "0.3.1"
 
 [lib]
 crate-type = ["cdylib", "lib"]
