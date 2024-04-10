@@ -16,7 +16,15 @@ bpf-entrypoint = []
 test-sbf = []
 
 [dependencies]
-solana-program = "1.18.2"
+bincode = "1.3.3"
+log = "0.4.20"
+serde = { version = "1.0.193", features = ["derive"] }
+solana-frozen-abi-macro = { git = "https://github.com/anza-xyz/agave", ref = "9706a6464665f7ebd6ead47f0d12f853ccacbab9" }
+solana-frozen-abi = { git = "https://github.com/anza-xyz/agave", ref = "9706a6464665f7ebd6ead47f0d12f853ccacbab9" }
+solana-program = { git = "https://github.com/anza-xyz/agave", ref = "9706a6464665f7ebd6ead47f0d12f853ccacbab9" }
 
 [lib]
 crate-type = ["cdylib", "lib"]
+
+[build-dependencies]
+rustc_version = "0.4"
