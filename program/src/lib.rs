@@ -7,6 +7,7 @@
 mod entrypoint;
 pub mod error;
 pub mod processor;
+pub mod state;
 
 // [Core BPF]: TODO: Program-test will not overwrite existing built-ins.
 // See https://github.com/solana-labs/solana/pull/35233.
