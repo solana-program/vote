@@ -161,40 +161,118 @@ fn process_initialize_account(
 
 fn process_authorize(
     _program_id: &Pubkey,
-    _accounts: &[AccountInfo],
-    _authorized: &Pubkey,
-    _vote_authorize: VoteAuthorize,
+    accounts: &[AccountInfo],
+    authorized: &Pubkey,
+    vote_authorize: VoteAuthorize,
+    signers: &HashSet<Pubkey>,
 ) -> ProgramResult {
+    let accounts_iter = &mut accounts.iter();
+
+    let vote_account = next_account_info(accounts_iter)?;
+    let vote_account_data_len = vote_account.data_len();
+
+    let mut vote_state: VoteState = bincode::deserialize(&vote_account.try_borrow_data()?)
+        .map_err(|_| {
+            // [Core BPF]: Original implementation was `InstructionError::GenericError`.
+            ProgramError::InvalidAccountData
+        })?
+        .convert_to_current();
+
+    let clock = <Clock as Sysvar>::get()?;
+    let rent = <Rent as Sysvar>::get()?;
+
+    match vote_authorize {
+        VoteAuthorize::Voter => {
+            let authorized_withdrawer_signer =
+                verify_authorized_signer(&vote_state.authorized_withdrawer, &signers).is_ok();
+
+            vote_state.set_new_authorized_voter(
+                authorized,
+                clock.epoch,
+                clock
+                    .leader_schedule_epoch
+                    .checked_add(1)
+                    .ok_or(ProgramError::InvalidAccountData)?,
+                |epoch_authorized_voter| {
+                    // current authorized withdrawer or authorized voter must say "yay"
+                    if authorized_withdrawer_signer {
+                        Ok(())
+                    } else {
+                        verify_authorized_signer(&epoch_authorized_voter, &signers)
+                    }
+                },
+            )?;
+        }
+        VoteAuthorize::Withdrawer => {
+            // current authorized withdrawer must say "yay"
+            verify_authorized_signer(&vote_state.authorized_withdrawer, &signers)?;
+            vote_state.authorized_withdrawer = *authorized;
+        }
+    }
+
+    set_vote_account_state(vote_account, vote_state, &rent)?;
+
     Ok(())
 }
 
 fn process_authorize_checked(
-    _program_id: &Pubkey,
-    _accounts: &[AccountInfo],
-    _vote_authorize: VoteAuthorize,
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    vote_authorize: VoteAuthorize,
 ) -> ProgramResult {
-    Ok(())
+    let voter_pubkey = accounts[3].key; // TODO
+    process_authorize(
+        program_id,
+        accounts,
+        voter_pubkey,
+        vote_authorize,
+        &get_signers(accounts),
+    )
 }
 
 fn process_authorize_with_seed(
-    _program_id: &Pubkey,
-    _accounts: &[AccountInfo],
-    _authorized: &Pubkey,
-    _authorization_type: VoteAuthorize,
-    _current_authority_derived_key_owner: &Pubkey,
-    _current_authority_derived_key_seed: &str,
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    authorized: &Pubkey,
+    authorization_type: VoteAuthorize,
+    current_authority_derived_key_owner: &Pubkey,
+    current_authority_derived_key_seed: &str,
 ) -> ProgramResult {
-    Ok(())
+    let mut expected_authority_keys: HashSet<Pubkey> = HashSet::default();
+    // TODO
+    if accounts[2].is_signer {
+        let base_pubkey = accounts[2].key; // TODO
+        expected_authority_keys.insert(Pubkey::create_with_seed(
+            base_pubkey,
+            current_authority_derived_key_seed,
+            current_authority_derived_key_owner,
+        )?);
+    };
+    process_authorize(
+        program_id,
+        accounts,
+        authorized,
+        authorization_type,
+        &expected_authority_keys,
+    )
 }
 
 fn process_authorize_checked_with_seed(
-    _program_id: &Pubkey,
-    _accounts: &[AccountInfo],
-    _authorization_type: VoteAuthorize,
-    _current_authority_derived_key_owner: &Pubkey,
-    _current_authority_derived_key_seed: &str,
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    authorization_type: VoteAuthorize,
+    current_authority_derived_key_owner: &Pubkey,
+    current_authority_derived_key_seed: &str,
 ) -> ProgramResult {
-    Ok(())
+    let new_authority = accounts[3].key; // TODO
+    process_authorize_with_seed(
+        program_id,
+        accounts,
+        new_authority,
+        authorization_type,
+        current_authority_derived_key_owner,
+        current_authority_derived_key_seed,
+    )
 }
 
 fn process_update_validator_identity(
@@ -241,9 +319,13 @@ pub fn process(
         VoteInstruction::InitializeAccount(vote_init) => {
             process_initialize_account(program_id, accounts, vote_init)
         }
-        VoteInstruction::Authorize(voter_pubkey, vote_authorize) => {
-            process_authorize(program_id, accounts, &voter_pubkey, vote_authorize)
-        }
+        VoteInstruction::Authorize(voter_pubkey, vote_authorize) => process_authorize(
+            program_id,
+            accounts,
+            &voter_pubkey,
+            vote_authorize,
+            &get_signers(accounts),
+        ),
         VoteInstruction::AuthorizeChecked(vote_authorize) => {
             process_authorize_checked(program_id, accounts, vote_authorize)
         }
