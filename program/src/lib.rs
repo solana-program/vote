@@ -2,6 +2,7 @@
 
 #[cfg(all(target_os = "solana", feature = "bpf-entrypoint"))]
 mod entrypoint;
+pub mod processor;
 
 // [Core BPF]: TODO: Program-test will not overwrite existing built-ins.
 // See https://github.com/solana-labs/solana/pull/35233.
