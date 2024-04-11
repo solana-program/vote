@@ -6,9 +6,15 @@ use {
         state::{vote::Vote, vote_state_update::VoteStateUpdate},
     },
     solana_program::{
-        account_info::AccountInfo, entrypoint::ProgramResult, program_error::ProgramError,
+        account_info::{next_account_info, AccountInfo},
+        clock::Clock,
+        entrypoint::ProgramResult,
+        program_error::ProgramError,
         pubkey::Pubkey,
+        rent::Rent,
+        sysvar::Sysvar,
     },
+    std::collections::HashSet,
 };
 
 // [Core BPF]: Locally-implemented
@@ -23,11 +29,133 @@ where
     .map_err(|_| ProgramError::InvalidInstructionData)
 }
 
+fn get_signers(accounts: &[AccountInfo]) -> HashSet<Pubkey> {
+    accounts
+        .iter()
+        .filter_map(|account| {
+            if account.is_signer {
+                Some(*account.key)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn verify_authorized_signer(
+    authorized: &Pubkey,
+    signers: &HashSet<Pubkey>,
+) -> Result<(), ProgramError> {
+    if signers.contains(authorized) {
+        Ok(())
+    } else {
+        Err(ProgramError::MissingRequiredSignature)
+    }
+}
+
+// [Core BPF]: Feature `vote_state_add_vote_latency` is active on all clusters.
+//   - `dev`: 597
+//   - `tst`: 586
+//   - `mnb`: 585
+// The original implementation here was requiring the feature set in order to
+// key on `vote_state_add_vote_latency` being active. Here we can just omit it.
+//
+// Updates the vote account state with a new VoteState instance.  This is required temporarily during the
+// upgrade of vote account state from V1_14_11 to Current.
+fn set_vote_account_state(
+    vote_account: &AccountInfo,
+    vote_state: VoteState,
+    rent: &Rent,
+) -> Result<(), ProgramError> {
+    // [Core BPF]: This implementation looks a little different from the
+    // original, since `AccountInfo` doesn't have methods like
+    // `set_data_length`. However, the control flow is the same.
+    //
+    // If this conditional resolves to `true`, store the old vote state:
+    //
+    // ```
+    // [ The account data is too small and needs to be reallocated ]
+    //   - AND -
+    // [
+    //     The realloc will cause the account to no longer be rent-exempt
+    //      - OR -
+    //     The realloc failed for other reasons
+    // ]
+    // ```
+    //
+    // Otherwise store the new vote state.
+    let vote_state_size = VoteStateVersions::vote_state_size_of(true);
+    if (vote_account.data_len() < vote_state_size)
+        && (!rent.is_exempt(vote_account.lamports(), vote_state_size)
+            || vote_account.realloc(vote_state_size, false).is_err())
+    {
+        // Account cannot be resized to the size of a vote state as it will not be rent exempt, or failed to be
+        // resized for other reasons.  So store the V1_14_11 version.
+        bincode::serialize_into(
+            &mut vote_account.try_borrow_mut_data()?[..],
+            VoteState1_14_11::from(vote_state),
+        )
+        .map_err(|_| {
+            // [Core BPF]: Original implementation was `InstructionError::GenericError`.
+            ProgramError::InvalidAccountData
+        })?;
+        return Ok(());
+    }
+
+    // Vote account is large enough to store the newest version of vote state.
+    bincode::serialize_into(
+        &mut vote_account.try_borrow_mut_data()?[..],
+        VoteStateVersions::new_current(vote_state),
+    )
+    .map_err(|_| {
+        // [Core BPF]: Original implementation was `InstructionError::GenericError`.
+        ProgramError::InvalidAccountData
+    })?;
+
+    Ok(())
+}
+
 fn process_initialize_account(
     _program_id: &Pubkey,
-    _accounts: &[AccountInfo],
-    _vote_init: VoteInit,
+    accounts: &[AccountInfo],
+    vote_init: VoteInit,
 ) -> ProgramResult {
+    let signers = get_signers(accounts);
+    let accounts_iter = &mut accounts.iter();
+
+    let vote_account = next_account_info(accounts_iter)?;
+    let vote_account_data_len = vote_account.data_len();
+
+    let clock = <Clock as Sysvar>::get()?;
+    let rent = <Rent as Sysvar>::get()?;
+
+    if !rent.is_exempt(vote_account.lamports(), vote_account_data_len) {
+        return Err(ProgramError::InsufficientFunds);
+    }
+
+    // [Core BPF]: The original implementation was passing
+    // `feature_set.is_active(&feature_set::vote_state_add_vote_latency::id())`
+    // as the boolean argument for `VoteStateVersions::vote_state_size_of`.
+    // Since this feature is active on all clusters, we just pass `true` here.
+    if vote_account_data_len != VoteStateVersions::vote_state_size_of(true) {
+        return Err(ProgramError::InvalidAccountData);
+    }
+
+    let vote_state: VoteStateVersions = bincode::deserialize(&vote_account.try_borrow_data()?)
+        .map_err(|_| {
+            // [Core BPF]: Original implementation was `InstructionError::GenericError`.
+            ProgramError::InvalidAccountData
+        })?;
+
+    if !vote_state.is_uninitialized() {
+        return Err(ProgramError::AccountAlreadyInitialized);
+    }
+
+    // node must agree to accept this vote account
+    verify_authorized_signer(&vote_init.node_pubkey, &signers)?;
+
+    set_vote_account_state(vote_account, VoteState::new(vote_init, clock), &rent)?;
+
     Ok(())
 }
 
