@@ -277,8 +277,33 @@ fn process_authorize_checked_with_seed(
 
 fn process_update_validator_identity(
     _program_id: &Pubkey,
-    _accounts: &[AccountInfo],
+    accounts: &[AccountInfo],
 ) -> ProgramResult {
+    let signers = get_signers(accounts);
+    let accounts_iter = &mut accounts.iter();
+
+    let vote_info = next_account_info(accounts_iter)?;
+    let node_info = next_account_info(accounts_iter)?;
+
+    let rent = <Rent as Sysvar>::get()?;
+
+    let mut vote_state: VoteState = bincode::deserialize(&vote_info.try_borrow_data()?)
+        .map_err(|_| {
+            // [Core BPF]: Original implementation was `InstructionError::GenericError`.
+            ProgramError::InvalidAccountData
+        })?
+        .convert_to_current();
+
+    // current authorized withdrawer must say "yay"
+    verify_authorized_signer(&vote_state.authorized_withdrawer, &signers)?;
+
+    // new node must say "yay"
+    verify_authorized_signer(node_info.key, &signers)?;
+
+    vote_state.node_pubkey = *node_info.key;
+
+    set_vote_account_state(vote_info, vote_state, &rent)?;
+
     Ok(())
 }
 
