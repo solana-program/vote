@@ -2,13 +2,15 @@
 
 use {
     crate::{
+        error::VoteError,
         instruction::{VoteAuthorize, VoteInit, VoteInstruction},
         state::{vote::Vote, vote_state_update::VoteStateUpdate},
     },
     solana_program::{
         account_info::{next_account_info, AccountInfo},
-        clock::Clock,
+        clock::{Clock, Slot},
         entrypoint::ProgramResult,
+        epoch_schedule::EpochSchedule,
         program_error::ProgramError,
         pubkey::Pubkey,
         rent::Rent,
@@ -50,6 +52,22 @@ fn verify_authorized_signer(
         Ok(())
     } else {
         Err(ProgramError::MissingRequiredSignature)
+    }
+}
+
+/// Given the current slot and epoch schedule, determine if a commission change
+/// is allowed
+pub fn is_commission_update_allowed(slot: Slot, epoch_schedule: &EpochSchedule) -> bool {
+    // always allowed during warmup epochs
+    if let Some(relative_slot) = slot
+        .saturating_sub(epoch_schedule.first_normal_slot)
+        .checked_rem(epoch_schedule.slots_per_epoch)
+    {
+        // allowed up to the midpoint of the epoch
+        relative_slot.saturating_mul(2) <= epoch_schedule.slots_per_epoch
+    } else {
+        // no slots per epoch, just allow it, even though this should never happen
+        true
     }
 }
 
@@ -309,9 +327,66 @@ fn process_update_validator_identity(
 
 fn process_update_commission(
     _program_id: &Pubkey,
-    _accounts: &[AccountInfo],
-    _commission: u8,
+    accounts: &[AccountInfo],
+    commission: u8,
 ) -> ProgramResult {
+    let signers = get_signers(accounts);
+    let accounts_iter = &mut accounts.iter();
+
+    let vote_info = next_account_info(accounts_iter)?;
+
+    // Decode vote state only once, and only if needed
+    let mut vote_state = None;
+
+    // [Core BPF]: Feature `allow_commission_decrease_at_any_time` is inactive.
+    // Below is the original implementation, followed by the feature-enabled
+    // one, which has been commented out.
+    let enforce_commission_update_rule = true;
+    // let enforce_commission_update_rule = if let Ok(decoded_vote_state) =
+    //     bincode::deserialize::<VoteStateVersions>(&vote_info.try_borrow_data()?)
+    // {
+    //     vote_state = Some(decoded_vote_state.convert_to_current());
+    //     commission > vote_state.as_ref().unwrap().commission
+    // } else {
+    //     true
+    // };
+
+    // [Core BPF]:
+    // Feature `commission_updates_only_allowed_in_first_half_of_epoch` is
+    // active on all clusters.
+    //   - `dev`: 520
+    //   - `tst`: 471
+    //   - `mnb`: 487
+    //
+    // As a result, we can remove the feature gate conditional behavior from
+    // the original implementation.
+    let clock = <Clock as Sysvar>::get()?;
+    let epoch_schedule = <EpochSchedule as Sysvar>::get()?;
+    let rent = <Rent as Sysvar>::get()?;
+
+    if enforce_commission_update_rule {
+        if !is_commission_update_allowed(clock.slot, &epoch_schedule) {
+            return Err(VoteError::CommissionUpdateTooLate.into());
+        }
+    }
+
+    let mut vote_state = match vote_state {
+        Some(vote_state) => vote_state,
+        None => bincode::deserialize::<VoteStateVersions>(&vote_info.try_borrow_data()?)
+            .map_err(|_| {
+                // [Core BPF]: Original implementation was `InstructionError::GenericError`.
+                ProgramError::InvalidAccountData
+            })?
+            .convert_to_current(),
+    };
+
+    // current authorized withdrawer must say "yay"
+    verify_authorized_signer(&vote_state.authorized_withdrawer, &signers)?;
+
+    vote_state.commission = commission;
+
+    set_vote_account_state(vote_info, vote_state, &rent)?;
+
     Ok(())
 }
 
