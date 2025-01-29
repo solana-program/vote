@@ -1,6 +1,7 @@
 .anchor
 .cargo
 .DS_Store
+.vscode
 **/.DS_Store
 **/target
 **/*.rs.bk

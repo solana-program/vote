@@ -1,3 +1,24 @@
 [workspace]
 resolver = "2"
 members = ["program"]
+# Required for CI
+exclude = ["solana-conformance/impl/solfuzz-agave"]
+
+[workspace.package]
+authors = ["Anza Technology Maintainers <maintainers@anza.xyz>"]
+repository = "https://github.com/solana-program/address-lookup-table"
+readme = "./README.md"
+license-file = "./LICENSE"
+edition = "2021"
+
+[workspace.metadata.cli]
+solana = "2.0.1"
+
+# Specify Rust toolchains for rustfmt, clippy, and build.
+# Any unprovided toolchains default to stable.
+[workspace.metadata.toolchains]
+format = "nightly-2024-05-02"
+lint = "nightly-2024-05-02"
+
+[workspace.dependencies]
+solana-program = "2.0.1"

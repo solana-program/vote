@@ -1,12 +1,12 @@
 [package]
 name = "solana-vote-program"
-version = "0.1.0"
+version = "0.0.1"
 description = "Solana Vote Program"
-authors = ["Anza Technology Maintainers <maintainers@anza.xyz>"]
-repository = "https://github.com/solana-program/config"
-readme = "./README.md"
-license-file = "../LICENSE"
-edition = "2021"
+authors = { workspace = true }
+repository = { workspace = true }
+readme = { workspace = true }
+license-file = { workspace = true }
+edition = { workspace = true }
 
 [package.metadata.solana]
 program-id = "Vote111111111111111111111111111111111111111"
@@ -16,7 +16,15 @@ bpf-entrypoint = []
 test-sbf = []
 
 [dependencies]
-solana-program = "1.18.2"
+solana-program = { workspace = true }
+
+[dev-dependencies]
 
 [lib]
 crate-type = ["cdylib", "lib"]
+
+[lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = [
+    'cfg(target_os, values("solana"))',
+]
