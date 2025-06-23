@@ -1,3 +1,0 @@
-# Vote Program
-
-TODO
